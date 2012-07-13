@@ -2,32 +2,20 @@ var fcgi = require("fastcgi-stream"),
 	fs = require("fs"),
 	util = require("util"),
 	net = require("net"),
-	http = require("http"),
-	IOWatcher = process.binding("io_watcher").IOWatcher,
-	
-	netBindings = process.binding("net"),
-	_net_accept = netBindings.accept;
+	http = require("http");
 
 var FCGI_LISTENSOCK_FILENO = process.stdin.fd;
 
 var activeRequests = 0;
-var shuttingDown = false;
 
 var closeConnection = function(socket) {
 	socket.destroy();
 	socket = null;
 	activeRequests--;
-
-	console.error("closedconn.", activeRequests);
-	if((activeRequests == 0) && shuttingDown) {
-		console.error("All done!");
-		process.exit(-1);
-	}
 }
 
 // This is where the magic happens.
-var handleConnection = function(result, server) {
-	var socket = new net.Socket(result.fd);
+var handleConnection = function(socket, server) {
 	socket.setNoDelay(true);
 	var fastcgiStream = new fcgi.FastCGIStream(socket);
 	
@@ -68,14 +56,30 @@ var handleConnection = function(result, server) {
 				// Setup http response.
 				request.res = new http.ServerResponse(request.req);
 				
-				request.res.assignSocket({
+				var fakeSocket = {
 					writable: true,
 					write: function(data, encoding) {
 						var stdOutRecord = new fcgi.records.StdOut(data);
 						stdOutRecord.encoding = encoding;
 						fastcgiStream.writeRecord(requestId, stdOutRecord);
+					},
+					on: function(eventName, callback) {
+						if (eventName == 'close') {
+							socket.on('close', callback);
+						} else {
+							console.error("http server requested a listener on the '" + eventName + "' event name that will be ignored");
+						}
+					},
+					removeListener: function(eventName, callback) {
+						if (eventName == 'close') {
+							socket.removeListener('close', callback);
+						} else {
+							console.error("http server requested a listener be removed from the '" + eventName + "' event name but it will be ignored");
+						}
 					}
-				});
+				};
+				
+				request.res.assignSocket(fakeSocket);
 				
 				// TODO: would be nice to support this, but it's causing weird
 				// shit when sent over the FCGI wire.
@@ -92,7 +96,9 @@ var handleConnection = function(result, server) {
 					http.OutgoingMessage.prototype._storeHeader.apply(this, ["", headers]);
 				};
 				
-				request.res.on("finish", function() {								
+				request.res.on("finish", function() {		
+					request.res.detachSocket(fakeSocket);					
+					
 					var end = new fcgi.records.EndRequest(0, fcgi.records.EndRequest.protocolStatus.REQUEST_COMPLETE);
 					fastcgiStream.writeRecord(requestId, end);
 
@@ -128,27 +134,28 @@ var handleConnection = function(result, server) {
 };
 
 module.exports.handle = function(server) {
+	var pipeServer = net.createServer();
+	
 	var initiateShutdown = function() {
-		console.error("Initiating shutdown.");
-		shuttingDown = true;
-		console.error(activeRequests);
-		if(activeRequests == 0) {
+		console.error("Initiating shutdown with " + activeRequests + " in progress");
+		pipeServer.close(function() {
 			console.error("Shutting down.");
-			watcher.stop();
 			process.exit(0);
-		}
-	};
-
-	var watcher = new IOWatcher();
-	watcher.set(FCGI_LISTENSOCK_FILENO, true, false);
-	
-	watcher.callback = function() {
-		var result = _net_accept(FCGI_LISTENSOCK_FILENO);
-		handleConnection(result, server);
+		});
 	};
 	
-	watcher.start();
+	pipeServer.listen({fd: FCGI_LISTENSOCK_FILENO}, function() {
+		pipeServer.on('connection',function(socket) {
+			handleConnection(socket, server);
+		});
+		
+	});
 
+	
+	pipeServer.on('error', function(err) {
+		console.error("Something bad happened: " + err);
+	});
+	
 	process.on("SIGUSR1", initiateShutdown);
 	process.on("SIGTERM", initiateShutdown);
 };
