@@ -14,32 +14,18 @@ var closeConnection = function(socket) {
 	activeRequests--;
 }
 
-// This is where the magic happens.
-var handleConnection = function(socket, server) {
-	socket.setNoDelay(true);
-	var fastcgiStream = new fcgi.FastCGIStream(socket);
-	
-	activeRequests++;
+var newRequestHandler = function(requestId, fastcgiStream, socket, server) {
 
-	var requests = {};
+	var request;
 	
-	fastcgiStream.on("record", function(requestId, record) {
-		var request = requests[requestId];
-
+	return function(record) {
 		if(record instanceof fcgi.records.BeginRequest) {
-			if(request) {
-				closeConnection(socket);
-			}
-
-			requests[requestId] = {
+			console.error("Creaing req object for " + requestId);
+			request = {
 				req: new http.IncomingMessage(null)
 			};
 		}
 		
-		else if(record instanceof fcgi.records.EndRequest) {
-			delete requests[requestId];
-		}
-	
 		else if(record instanceof fcgi.records.Params) {
 			record.params.forEach(function(paramPair) {
 				request.req._addHeaderLine(paramPair[0].toLowerCase().replace("_", "-"), paramPair[1]);
@@ -130,6 +116,43 @@ var handleConnection = function(socket, server) {
 			else {
 				request.req.emit("data", record.data);
 			}
+		}		
+	}
+
+
+}
+
+// This is where the magic happens.
+var handleConnection = function(socket, server) {
+	socket.setNoDelay(true);
+	var fastcgiStream = new fcgi.FastCGIStream(socket);
+	
+	activeRequests++;
+
+	var requestHandlers = {};
+	
+	fastcgiStream.on("record", function(requestId, record) {
+		
+		var handler = requestHandlers[requestId];
+		
+		if(record instanceof fcgi.records.BeginRequest) {
+			if(handler) {
+				closeConnection(socket);
+			}
+			
+			handler = newRequestHandler(requestId, fastcgiStream, socket, server); 
+
+			requestHandlers[requestId] = handler;
+		}
+		
+		else if(record instanceof fcgi.records.EndRequest) {
+			if (handler) {
+				delete requestHandlers[requestId];
+			}
+		}
+	
+		if (handler) {
+			handler(record);
 		}
 	});
 	
