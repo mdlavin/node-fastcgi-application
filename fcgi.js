@@ -16,35 +16,34 @@ var closeConnection = function(socket) {
 
 var newRequestHandler = function(requestId, fastcgiStream, socket, server) {
 
-	var request;
+	var req;
+	var res;
 	
 	return function(record) {
 		if(record instanceof fcgi.records.BeginRequest) {
 			console.error("Creaing req object for " + requestId);
-			request = {
-				req: new http.IncomingMessage(null)
-			};
+			req = new http.IncomingMessage(null)
 		}
 		
 		else if(record instanceof fcgi.records.Params) {
 			record.params.forEach(function(paramPair) {
-				request.req._addHeaderLine(paramPair[0].toLowerCase().replace("_", "-"), paramPair[1]);
+				req._addHeaderLine(paramPair[0].toLowerCase().replace("_", "-"), paramPair[1]);
 			});
 			
 			if(record.params.length == 0) {
 				// Fill in the request object.
-				var httpVersionStr = request.req.headers["server-protocol"] || "HTTP/1.1";
+				var httpVersionStr = req.headers["server-protocol"] || "HTTP/1.1";
 				var httpVersionParts = httpVersionStr.replace(/^HTTP\//, "").split(".");
 				if(httpVersionParts.length != 2) httpVersionParts = [1, 1];
-				request.req.httpVersionMajor = httpVersionParts[0];
-				request.req.httpVersionMinor = httpVersionParts[1];
-				request.req.httpVersion = request.req.httpVersionMajor + "." + request.req.httpVersionMinor;
+				req.httpVersionMajor = httpVersionParts[0];
+				req.httpVersionMinor = httpVersionParts[1];
+				req.httpVersion = req.httpVersionMajor + "." + req.httpVersionMinor;
 
-				request.req.url = request.req.headers["request-uri"];
-				request.req.method = request.req.headers["request-method"];
+				req.url = req.headers["request-uri"];
+				req.method = req.headers["request-method"];
 
 				// Setup http response.
-				request.res = new http.ServerResponse(request.req);
+				res = new http.ServerResponse(req);
 				
 				var fakeSocket = {
 					writable: true,
@@ -69,25 +68,25 @@ var newRequestHandler = function(requestId, fastcgiStream, socket, server) {
 					}
 				};
 				
-				request.res.assignSocket(fakeSocket);
+				res.assignSocket(fakeSocket);
 				
 				// TODO: would be nice to support this, but it's causing weird
 				// shit when sent over the FCGI wire.
-				request.res.useChunkedEncodingByDefault = false;
+				res.useChunkedEncodingByDefault = false;
 
 				// Sorta hacky, we override the _storeHeader implementation of 
 				// OutgoingMessage and blank out the http response header line.
 				// Instead, we parse it out and put it into the Status http header.
 				// TODO: should we check if we're supposed to be sending NPH or 
 				// something? Can we even do that in FCGI?
-				request.res._storeHeader = function(statusLine, headers) {
+				res._storeHeader = function(statusLine, headers) {
 					var matches = statusLine.match(/^HTTP\/[0-9]\.[0-9] (.+)/);
 					headers["Status"] = matches[1];
 					http.OutgoingMessage.prototype._storeHeader.apply(this, ["", headers]);
 				};
 				
-				request.res.on("finish", function() {		
-					request.res.detachSocket(fakeSocket);					
+				res.on("finish", function() {		
+					res.detachSocket(fakeSocket);					
 					
 					var end = new fcgi.records.EndRequest(0, fcgi.records.EndRequest.protocolStatus.REQUEST_COMPLETE);
 					fastcgiStream.writeRecord(requestId, end);
@@ -96,7 +95,7 @@ var newRequestHandler = function(requestId, fastcgiStream, socket, server) {
 				});
 				
 				try {
-					server.emit("request", request.req, request.res);
+					server.emit("request", req, res);
 				}
 				catch(e) {
 					console.error(e);
@@ -111,10 +110,10 @@ var newRequestHandler = function(requestId, fastcgiStream, socket, server) {
 		else if(record instanceof fcgi.records.StdIn) {
 			if(record.data.length == 0) {
 				// Emit "end" on the IncomingMessage.
-				request.req.emit("end");
+				req.emit("end");
 			}
 			else {
-				request.req.emit("data", record.data);
+				req.emit("data", record.data);
 			}
 		}		
 	}
