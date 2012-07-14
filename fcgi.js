@@ -21,7 +21,6 @@ var newRequestHandler = function(requestId, fastcgiStream, socket, server) {
 	
 	return function(record) {
 		if(record instanceof fcgi.records.BeginRequest) {
-			console.error("Creaing req object for " + requestId);
 			req = new http.IncomingMessage(null)
 		}
 		
