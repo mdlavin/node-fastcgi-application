@@ -35,6 +35,10 @@ var handleConnection = function(socket, server) {
 				req: new http.IncomingMessage(null)
 			};
 		}
+		
+		else if(record instanceof fcgi.records.EndRequest) {
+			delete requests[requestId];
+		}
 	
 		else if(record instanceof fcgi.records.Params) {
 			record.params.forEach(function(paramPair) {
