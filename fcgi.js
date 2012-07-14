@@ -18,6 +18,7 @@ var newRequestHandler = function(requestId, fastcgiStream, socket, server) {
 
 	var req;
 	var res;
+	var params = [];
 	
 	return function(record) {
 		if(record instanceof fcgi.records.BeginRequest) {
@@ -25,21 +26,34 @@ var newRequestHandler = function(requestId, fastcgiStream, socket, server) {
 		}
 		
 		else if(record instanceof fcgi.records.Params) {
-			record.params.forEach(function(paramPair) {
-				req._addHeaderLine(paramPair[0].toLowerCase().replace("_", "-"), paramPair[1]);
-			});
+			params = params.concat(record.params);
 			
 			if(record.params.length == 0) {
+				var paramMap = {}
+				
+				params.forEach(function(paramPair) {
+					var name = paramPair[0].toLowerCase();
+					var value = paramPair[1];
+					
+					paramMap[name] = value;
+					
+					if (name.slice(0, 5) == 'http_') {
+						var headerName = name.slice(5).replace('_', '-');
+						req._addHeaderLine(headerName, value);
+					}
+					
+				});
+
 				// Fill in the request object.
-				var httpVersionStr = req.headers["server-protocol"] || "HTTP/1.1";
+				var httpVersionStr = paramMap["server_protocol"] || "HTTP/1.1";
 				var httpVersionParts = httpVersionStr.replace(/^HTTP\//, "").split(".");
 				if(httpVersionParts.length != 2) httpVersionParts = [1, 1];
 				req.httpVersionMajor = httpVersionParts[0];
 				req.httpVersionMinor = httpVersionParts[1];
 				req.httpVersion = req.httpVersionMajor + "." + req.httpVersionMinor;
 
-				req.url = req.headers["request-uri"];
-				req.method = req.headers["request-method"];
+				req.url = paramMap["request_uri"];
+				req.method = paramMap["request_method"];
 
 				// Setup http response.
 				res = new http.ServerResponse(req);
