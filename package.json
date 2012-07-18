@@ -1,0 +1,9 @@
+{
+  "name": "fastcgi-application",
+  "version": "0.0.1",
+  "description": "A library to support executing a node application as a fastcgi script",
+  "dependencies": {
+    "fastcgi-stream": ">= 0.1.1"
+  },
+  "main": "lib/fcgi.js"
+}
